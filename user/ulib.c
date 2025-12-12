@@ -148,6 +148,13 @@ memcpy(void *dst, const void *src, uint n)
   return memmove(dst, src, n);
 }
 
+// sleep wrapper - calls pause
+int
+sleep(int n)
+{
+  return pause(n);
+}
+
 char *
 sbrk(int n) {
   return sys_sbrk(n, SBRK_EAGER);

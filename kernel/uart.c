@@ -38,10 +38,13 @@
 #define ReadReg(reg) (*(Reg(reg)))
 #define WriteReg(reg, v) (*(Reg(reg)) = (v))
 
-// for transmission.
+// 使用一个锁来保护所有 UART 输出
+// (复用原有的 tx_lock)
 static struct spinlock tx_lock;
-static int tx_busy;           // is the UART busy sending?
-static int tx_chan;           // &tx_chan is the "wait channel"
+
+// 移除导致死锁的中断逻辑
+// static int tx_busy;
+// static int tx_chan;
 
 extern volatile int panicking; // from printf.c
 extern volatile int panicked; // from printf.c
@@ -68,37 +71,27 @@ uartinit(void)
   // reset and enable FIFOs.
   WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
-  // enable transmit and receive interrupts.
-  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+  // 只启用接收中断，禁用发送中断
+  WriteReg(IER, IER_RX_ENABLE);
 
-  initlock(&tx_lock, "uart");
+  initlock(&tx_lock, "uart"); // 这个锁现在用于 uartputc_sync
 }
 
+// 重写 uartwrite，使其使用同步的、锁保护的 uartputc_sync 函数
 // transmit buf[] to the uart. it blocks if the
 // uart is busy, so it cannot be called from
 // interrupts, only from write() system calls.
 void
 uartwrite(char buf[], int n)
 {
-  acquire(&tx_lock);
-
-  int i = 0;
-  while(i < n){ 
-    while(tx_busy != 0){
-      // wait for a UART transmit-complete interrupt
-      // to set tx_busy to 0.
-      sleep(&tx_chan, &tx_lock);
-    }   
-      
-    WriteReg(THR, buf[i]);
-    i += 1;
-    tx_busy = 1;
+  // 移除旧的 acquire/sleep/release 逻辑
+  for(int i = 0; i < n; i++){
+    uartputc_sync(buf[i]);
   }
-
-  release(&tx_lock);
 }
 
 
+// 修改 uartputc_sync 以使用 tx_lock
 // write a byte to the uart without using
 // interrupts, for use by kernel printf() and
 // to echo characters. it spins waiting for the uart's
@@ -106,8 +99,10 @@ uartwrite(char buf[], int n)
 void
 uartputc_sync(int c)
 {
+  // 使用锁代替 push_off
+  // acquire 会自动禁用中断
   if(panicking == 0)
-    push_off();
+    acquire(&tx_lock);
 
   if(panicked){
     for(;;)
@@ -119,8 +114,10 @@ uartputc_sync(int c)
     ;
   WriteReg(THR, c);
 
+  // 释放锁
+  // release 会自动恢复中断状态
   if(panicking == 0)
-    pop_off();
+    release(&tx_lock);
 }
 
 // read one input character from the UART.
@@ -136,6 +133,7 @@ uartgetc(void)
   }
 }
 
+// 从 uartintr 中移除所有发送相关的逻辑
 // handle a uart interrupt, raised because input has
 // arrived, or the uart is ready for more output, or
 // both. called from devintr().
@@ -144,13 +142,7 @@ uartintr(void)
 {
   ReadReg(ISR); // acknowledge the interrupt
 
-  acquire(&tx_lock);
-  if(ReadReg(LSR) & LSR_TX_IDLE){
-    // UART finished transmitting; wake up sending thread.
-    tx_busy = 0;
-    wakeup(&tx_chan);
-  }
-  release(&tx_lock);
+  // 移除所有 tx_lock, tx_busy, wakeup 逻辑
 
   // read and process incoming characters.
   while(1){

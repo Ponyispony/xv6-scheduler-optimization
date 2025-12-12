@@ -81,8 +81,40 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2) {
+    #if defined(SCHED_GLOBAL_MLFQ) || defined(SCHED_PERCPU_MLFQ)
+    acquire(&p->lock);
+    p->ticks_in_queue++;
+    
+    // 检查时间片是否用完
+    int current_slice = 0;
+    
+    switch (p->priority) {
+      case 0: current_slice = TIME_SLICE_Q0; break;
+      case 1: current_slice = TIME_SLICE_Q1; break;
+      case 2: current_slice = TIME_SLICE_Q2; break;
+      case 3: current_slice = TIME_SLICE_Q3; break;
+      case 4: current_slice = TIME_SLICE_Q4; break;
+      default: current_slice = 1;
+    }
+    
+    if (p->ticks_in_queue >= current_slice) {
+      // 时间片用完，优先级降低
+      if (p->priority < MLFQ_MAX_PRIORITY) {
+        p->priority++;
+      }
+      p->ticks_in_queue = 0; // 重置
+      release(&p->lock);
+      // 主动放弃CPU
+      yield();
+    } else {
+      release(&p->lock);
+    }
+    #else
+    // 默认或静态优先级：时钟中断导致yield
     yield();
+    #endif
+  }
 
   prepare_return();
 
@@ -152,8 +184,9 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0)
+  if(which_dev == 2 && myproc() != 0) {
     yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
@@ -216,4 +249,3 @@ devintr()
     return 0;
   }
 }
-
