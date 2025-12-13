@@ -12,3 +12,5 @@ fs.img
 mkfs/mkfs
 .gdbinit
 .vscode/
+*.bk
+*.img.bk
