@@ -10,8 +10,6 @@ xv6-labs-2025-10/
 │
 ├── user/
 │ ├── schedtest.c (新增) 综合测试程序
-│ ├── mlfqtest.c (新增) MLFQ测试
-│ ├── priotest.c (新增) 优先级测试
 │ ├── user.h (修改) 用户态接口
 │ ├── usys.pl (修改) 系统调用入口
 │ └── ulib.c (修改) sleep包装函数
